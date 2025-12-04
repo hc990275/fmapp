@@ -1,4 +1,4 @@
-name: 🚀 Quick Sync OK Branch & Telegram Deploy
+name: ⚡ Quick Sync OK Branch & Telegram Deploy (Final)
 
 on:
   # 每半小时自动运行
@@ -20,7 +20,7 @@ jobs:
       - name: ⬇️ Checkout 'ok' branch (快速浅克隆)
         uses: actions/checkout@v4
         with:
-          # 只拉取 ok 分支，并且只拉取最近一次提交 (fetch-depth: 1)，大幅加速
+          # 只拉取 ok 分支的最新提交，不影响上游仓库
           ref: ok
           fetch-depth: 1 
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -32,33 +32,31 @@ jobs:
 
       - name: 🔗 Add Upstream Remote and Fetch
         run: |
+          # 这一步确保了所有操作只针对您自己的仓库，不会涉及上游的 Pull Request
           git remote add upstream https://github.com/lystv/fmapp.git
-          # 明确拉取上游 ok 分支
           git fetch upstream ok
           
       - name: 💾 Merge Upstream into 'ok'
         id: merge
         run: |
-          echo "Attempting to merge upstream/ok into local ok branch..."
           # 尝试合并上游 ok 分支到本地 ok
           if git merge upstream/ok --allow-unrelated-histories --no-edit; then
             echo "Merge successful."
           else
-            echo "Merge failed. Conflicts need manual resolution."
-            # 在冲突发生时退出，阻止后续部署步骤
+            echo "Merge failed. Conflicts need manual resolution. Exiting."
             exit 1 
           fi
 
       - name: ⬆️ Push Changes and Check Status
         id: push_check
         run: |
-          # 检查本地 ok 分支是否领先于远程 origin/ok (即有新合并)
+          # 检查是否有新的合并需要推送到您的远程仓库
           if git diff --quiet origin/ok ok; then
-            echo "No new changes detected. Skipping push."
+            echo "No new changes detected. Skipping push and deployment."
             echo "has_pushed=false" >> $GITHUB_OUTPUT
           else
             echo "Changes detected. Pushing to origin/ok..."
-            # 推送合并后的更改到您的 Fork 仓库
+            # 推送合并后的更改到您的 Fork 仓库 (只会更新您自己的仓库)
             git push origin ok
             echo "has_pushed=true" >> $GITHUB_OUTPUT
           fi
@@ -74,30 +72,22 @@ jobs:
           TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           TELEGRAM_CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
           
-          echo "Start sending files from 'ok' branch to Telegram chat ID: $TELEGRAM_CHAT_ID"
-
           # 1. 发送初始成功消息
           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
             -d "chat_id=$TELEGRAM_CHAT_ID" \
             -d "parse_mode=Markdown" \
-            -d "text=🚀 *OK影视 'ok' 分支同步与文件部署成功* 🚀\n\n您的仓库 (`hc990275/fmapp:ok`) 已从上游更新，并开始发送更新文件。"
+            -d "text=🚀 *OK影视 'ok' 分支同步与文件部署成功* 🚀\n\n新文件已更新。"
 
           # 2. 查找并发送指定路径下的文件
-          echo "Searching for files in ./apk/release/ and ./apk/pro/..."
-          
-          # 查找所有 APK 和 JSON 文件 (仅关注您指定的两个目录)
           find ./apk/release/ ./apk/pro/ \( -name "*.apk" -o -name "*.json" \) -type f > /tmp/files_to_send.txt
 
           # 3. 循环发送文件
           while IFS= read -r FILE_PATH; do
             if [ -f "$FILE_PATH" ]; then
-              echo "Uploading $FILE_PATH..."
               # 使用 sendDocument API 发送文件
               curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" \
                 -F "chat_id=$TELEGRAM_CHAT_ID" \
                 -F "caption=文件更新: $(basename $FILE_PATH)" \
                 -F "document=@$FILE_PATH"
-            else
-              echo "File not found: $FILE_PATH"
             fi
           done < /tmp/files_to_send.txt

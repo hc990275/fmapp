@@ -20,7 +20,7 @@ jobs:
       - name: ⬇️ Checkout 'ok' branch (快速浅克隆)
         uses: actions/checkout@v4
         with:
-          # 只拉取 ok 分支的最新提交，不影响上游仓库
+          # 只拉取 ok 分支的最新提交，加快速度
           ref: ok
           fetch-depth: 1 
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -32,8 +32,9 @@ jobs:
 
       - name: 🔗 Add Upstream Remote and Fetch
         run: |
-          # 这一步确保了所有操作只针对您自己的仓库，不会涉及上游的 Pull Request
+          # 1. 添加上游仓库为远程源
           git remote add upstream https://github.com/lystv/fmapp.git
+          # 2. 明确拉取上游 ok 分支的最新状态
           git fetch upstream ok
           
       - name: 💾 Merge Upstream into 'ok'
@@ -50,19 +51,19 @@ jobs:
       - name: ⬆️ Push Changes and Check Status
         id: push_check
         run: |
-          # 检查是否有新的合并需要推送到您的远程仓库
+          # 检查本地分支是否领先于远程 origin/ok (即有新合并)
           if git diff --quiet origin/ok ok; then
             echo "No new changes detected. Skipping push and deployment."
             echo "has_pushed=false" >> $GITHUB_OUTPUT
           else
             echo "Changes detected. Pushing to origin/ok..."
-            # 推送合并后的更改到您的 Fork 仓库 (只会更新您自己的仓库)
+            # 推送合并后的更改到您的 Fork 仓库
             git push origin ok
             echo "has_pushed=true" >> $GITHUB_OUTPUT
           fi
           
       # -----------------------------------------------------
-      # 第二部分：Telegram 部署 (仅在新代码被推送后执行)
+      # 第二部分：Telegram 部署
       # -----------------------------------------------------
 
       - name: 📢 Send Notification and Files to Telegram
@@ -72,22 +73,41 @@ jobs:
           TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
           TELEGRAM_CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
           
-          # 1. 发送初始成功消息
+          # --- 1. 读取版本信息 ---
+          
+          # 读取 v.txt 的内容，作为主要版本号
+          PRO_VERSION=$(head -n 1 ./apk/pro/v.txt 2>/dev/null || echo "Pro Version Not Found")
+
+          # 格式化消息体
+          VERSION_MESSAGE=$(cat <<EOF
+🚀 *OK影视 'ok' 分支同步成功* 🚀
+
+--- 📊 *版本信息* 📊 ---
+*Pro 版本 (v.txt):* \`${PRO_VERSION}\`
+*Mobile (手机版):* 详见附件 mobile.json
+*Leanback (电视版):* 详见附件 leanback.json
+
+新文件已更新，正在发送附件...
+EOF
+)
+          
+          # 2. 发送初始成功消息
           curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
             -d "chat_id=$TELEGRAM_CHAT_ID" \
             -d "parse_mode=Markdown" \
-            -d "text=🚀 *OK影视 'ok' 分支同步与文件部署成功* 🚀\n\n新文件已更新。"
+            -d "text=$VERSION_MESSAGE"
 
-          # 2. 查找并发送指定路径下的文件
-          find ./apk/release/ ./apk/pro/ \( -name "*.apk" -o -name "*.json" \) -type f > /tmp/files_to_send.txt
+          # 3. 查找并发送指定路径下的所有 APK 和版本 JSON/TXT 文件
+          find ./apk/release/ ./apk/pro/ \( -name "*.apk" -o -name "*.json" -o -name "v.txt" \) -type f > /tmp/files_to_send.txt
 
-          # 3. 循环发送文件
+          # 4. 循环发送文件
           while IFS= read -r FILE_PATH; do
             if [ -f "$FILE_PATH" ]; then
+              FILE_BASENAME=$(basename "$FILE_PATH")
               # 使用 sendDocument API 发送文件
               curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" \
                 -F "chat_id=$TELEGRAM_CHAT_ID" \
-                -F "caption=文件更新: $(basename $FILE_PATH)" \
+                -F "caption=文件: ${FILE_BASENAME}" \
                 -F "document=@$FILE_PATH"
             fi
           done < /tmp/files_to_send.txt

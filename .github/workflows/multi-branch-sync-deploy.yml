@@ -1,0 +1,147 @@
+name: 🔁 Multi-Branch Sync & Telegram Deploy
+
+on:
+  # *** 关键更改：每半小时 (*/30) 自动运行一次 ***
+  schedule:
+    - cron: '*/30 * * * *'
+  # 允许手动在 Actions 页面触发
+  workflow_dispatch:
+
+# 权限配置：必须赋予工作流写入权限，以便它可以推送更改到您的所有分支
+permissions:
+  contents: write 
+
+jobs:
+  multi_branch_sync:
+    name: 1. Sync All Branches from Upstream
+    runs-on: ubuntu-latest
+    
+    # 这一步将遍历所有分支并尝试同步，如果 'ok' 分支有更新，则设置输出
+    outputs:
+      ok_branch_pushed: ${{ steps.sync.outputs.ok_branch_pushed }}
+
+    steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # 拉取所有分支历史
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: 🔗 Add Upstream Remote
+        run: git remote add upstream https://github.com/lystv/fmapp.git
+
+      - name: 🔄 Fetch Upstream Branches
+        run: git fetch upstream
+
+      - name: ⚙️ Configure Git User
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
+      - name: ♻️ Loop and Sync All Branches
+        id: sync
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { exec } = require('child_process');
+            const { promises: fs } = require('fs');
+
+            // 检查上游仓库的所有分支
+            const upstreamBranches = await exec.call(null, 'git branch -r | grep upstream | sed "s/.*upstream\\///" | grep -v HEAD', { encoding: 'utf8' });
+            const branches = upstreamBranches.trim().split('\n').filter(b => b.length > 0);
+            
+            let okPushed = false;
+
+            for (const branch of branches) {
+                // 检查本地是否存在此分支，不存在则跳过
+                const localBranchCheck = await exec.call(null, `git branch --list ${branch}`, { encoding: 'utf8' });
+                if (!localBranchCheck.trim()) {
+                    console.log(`Skipping branch ${branch}: no local equivalent found.`);
+                    continue;
+                }
+                
+                console.log(`\n--- Processing branch: ${branch} ---`);
+
+                try {
+                    // 1. 切换到目标分支
+                    await exec.call(null, `git checkout ${branch}`);
+                    // 2. 检查当前 HEAD SHA
+                    const oldSha = await exec.call(null, 'git rev-parse HEAD', { encoding: 'utf8' });
+                    
+                    // 3. 合并上游更改
+                    await exec.call(null, `git merge upstream/${branch} --allow-unrelated-histories --no-edit`);
+                    
+                    // 4. 检查新的 HEAD SHA
+                    const newSha = await exec.call(null, 'git rev-parse HEAD', { encoding: 'utf8' });
+
+                    if (oldSha.trim() !== newSha.trim()) {
+                        console.log(`Changes detected. Pushing ${branch}...`);
+                        await exec.call(null, `git push origin ${branch}`);
+                        
+                        // 标记 'ok' 分支是否被推送，供下一步使用
+                        if (branch === 'ok') {
+                            okPushed = true;
+                        }
+                    } else {
+                        console.log(`Branch ${branch} is already up-to-date. Skipping push.`);
+                    }
+
+                } catch (error) {
+                    console.error(`🚨 Failed to sync branch ${branch}. Conflict or error occurred.`);
+                    console.error(error.toString());
+                    // 保持循环继续同步其他分支
+                }
+            }
+            
+            # 设置输出变量，指示 'ok' 分支是否被更新
+            core.setOutput('ok_branch_pushed', okPushed);
+
+
+  telegram_deploy:
+    name: 2. Deploy OK Files to Telegram
+    runs-on: ubuntu-latest
+    needs: multi_branch_sync
+    
+    # 只有在前一个同步任务成功且 'ok' 分支有新代码推送时才运行
+    if: needs.multi_branch_sync.outputs.ok_branch_pushed == 'true'
+
+    steps:
+      - name: ⬇️ Checkout 'ok' branch for files
+        uses: actions/checkout@v4
+        with:
+          ref: ok
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📢 Send Notification and Files
+        run: |
+          TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          TELEGRAM_CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
+          
+          echo "Start sending files from 'ok' branch to Telegram chat ID: $TELEGRAM_CHAT_ID"
+
+          # 1. 发送初始成功消息
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+            -d "chat_id=$TELEGRAM_CHAT_ID" \
+            -d "parse_mode=Markdown" \
+            -d "text=✨ *OK影视 Fork 同步与文件部署成功* ✨\n\n您的仓库 (`hc990275/fmapp:ok`) 已从上游更新，并开始发送更新文件。"
+
+          # 2. 查找并发送指定路径下的文件
+          echo "Searching for files in ./apk/release/ and ./apk/pro/..."
+          
+          # 查找所有 APK 和 JSON 文件
+          find ./apk/release/ ./apk/pro/ \( -name "*.apk" -o -name "*.json" \) -type f > /tmp/files_to_send.txt
+
+          # 3. 循环发送文件
+          while IFS= read -r FILE_PATH; do
+            if [ -f "$FILE_PATH" ]; then
+              echo "Uploading $FILE_PATH..."
+              # 使用 sendDocument API 发送文件
+              curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument" \
+                -F "chat_id=$TELEGRAM_CHAT_ID" \
+                -F "caption=文件更新: $(basename $FILE_PATH)" \
+                -F "document=@$FILE_PATH"
+            else
+              echo "File not found: $FILE_PATH"
+            fi
+          done < /tmp/files_to_send.txt

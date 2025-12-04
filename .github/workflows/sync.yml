@@ -75,10 +75,11 @@ jobs:
           
           # --- 1. 读取版本信息 ---
           
-          # 读取 v.txt 的内容，作为主要版本号
+          # 读取 v.txt 的内容，作为主要版本号。
+          # 确保 v.txt 文件路径正确：./apk/pro/v.txt
           PRO_VERSION=$(head -n 1 ./apk/pro/v.txt 2>/dev/null || echo "Pro Version Not Found")
 
-          # 格式化消息体
+          # 格式化消息体 (使用 Markdown 语法)
           VERSION_MESSAGE=$(cat <<EOF
 🚀 *OK影视 'ok' 分支同步成功* 🚀
 

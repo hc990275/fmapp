@@ -78,7 +78,7 @@ jobs:
           # 读取 v.txt 的内容，作为主要版本号
           PRO_VERSION=$(head -n 1 ./apk/pro/v.txt 2>/dev/null || echo "Pro Version Not Found")
 
-          # 使用 '|- ' 定义多行消息，避免 YAML 语法错误
+          # 修复了 YAML 语法错误：将 VERSION_MESSAGE 定义为单行字符串
           VERSION_MESSAGE="🚀 *OK影视 'ok' 分支同步成功* 🚀\n\n--- 📊 *版本信息* 📊 ---\n*Pro 版本 (v.txt):* \`${PRO_VERSION}\`\n*Mobile (手机版):* 详见附件 mobile.json\n*Leanback (电视版):* 详见附件 leanback.json\n\n新文件已更新，正在发送附件..."
           
           # 2. 发送初始成功消息

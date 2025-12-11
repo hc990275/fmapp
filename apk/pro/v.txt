@@ -1,7 +1,5 @@
-3.8.2
+3.8.5
 * [App]
-* Fix bug
-* Optimize header parse
-* Support drm licence header
-* Add drm forceKey param
-* Add danmaku random color
+* BUG修复
+* 一些优化
+* 优化 Digest 认证

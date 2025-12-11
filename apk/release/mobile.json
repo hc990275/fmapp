@@ -1,5 +1,5 @@
 {
-  "code": "351",
-  "name": "3.5.1",
-  "desc": "* [App] \n* Fix bug \n* Optimize header parse \n* Support drm licence header \n* Add drm forceKey param"
+  "code": "353",
+  "name": "3.5.3",
+  "desc": "* [App] \n* BUG修复 \n* 一些优化 \n* 优化 Digest 认证"
 }
